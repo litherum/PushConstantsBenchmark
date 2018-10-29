@@ -52,12 +52,14 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		CD3DX12_ROOT_PARAMETER parameter2;
 		CD3DX12_ROOT_PARAMETER parameter3;
 
+		bool runRootConstants = false;
+
 		range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 		parameter.InitAsDescriptorTable(1, &range, D3D12_SHADER_VISIBILITY_VERTEX);
 
-		parameter2.InitAsConstants(8, 0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+		parameter2.InitAsConstants(8, runRootConstants ? 0 : 1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 
-		range2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
+		range2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, runRootConstants ? 1 : 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 		parameter3.InitAsDescriptorTable(1, &range2, D3D12_SHADER_VISIBILITY_PIXEL);
 
 		const D3D12_ROOT_PARAMETER parameters[] = { parameter, parameter2, parameter3 };
@@ -275,11 +277,11 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 
 		// Upload the vertex buffer to the GPU.
 		{
-
-			UINT32 data[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
+			float value = 0.000000625f;
+			float data[8] = { value, value, value, value, value, value, value, value };
 			D3D12_SUBRESOURCE_DATA cData = {};
 			cData.pData = reinterpret_cast<BYTE*>(data);
-			cData.RowPitch = 8 * sizeof(UINT32);
+			cData.RowPitch = 8 * sizeof(float);
 			cData.SlicePitch = cData.RowPitch;
 
 			UpdateSubresources(m_commandList.Get(), m_fakeConstantBuffer.Get(), fakeConstantBufferUpload.Get(), 0, 0, 1, &cData);
@@ -569,7 +571,7 @@ bool Sample3DSceneRenderer::Render()
 	UINT64 gpuFreq;
 	m_deviceResources->GetCommandQueue()->GetTimestampFrequency(&gpuFreq);
 	auto m_gpuFreqInv = 1000.0 / double(gpuFreq);
-	ss << (timing[1] - timing[0]) * m_gpuFreqInv << " ms" << std::endl;
+	ss << (timing[1] - timing[0]) * m_gpuFreqInv << std::endl;
 	OutputDebugStringA(ss.str().c_str());
 
 	PIXBeginEvent(m_commandList.Get(), 0, L"Draw the cube");
@@ -582,7 +584,8 @@ bool Sample3DSceneRenderer::Render()
 		// Bind the current frame's constant buffer to the pipeline.
 		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), m_deviceResources->GetCurrentFrameIndex(), m_cbvDescriptorSize);
 		m_commandList->SetGraphicsRootDescriptorTable(0, gpuHandle);
-		UINT32 data[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
+		float value = 0.000000625f;
+		float data[8] = { value, value, value, value, value, value, value, value };
 		m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
 		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuFakeHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), DX::c_frameCount, m_cbvDescriptorSize);
 		m_commandList->SetGraphicsRootDescriptorTable(2, gpuFakeHandle);
