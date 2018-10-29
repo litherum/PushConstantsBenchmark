@@ -4,6 +4,7 @@
 #include "..\Common\DirectXHelper.h"
 #include <ppltasks.h>
 #include <synchapi.h>
+#include <sstream>
 
 using namespace RootConstantPerformance;
 
@@ -47,19 +48,23 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 	{
 		CD3DX12_DESCRIPTOR_RANGE range;
 		CD3DX12_ROOT_PARAMETER parameter;
+		CD3DX12_ROOT_PARAMETER parameter2;
 
 		range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
 		parameter.InitAsDescriptorTable(1, &range, D3D12_SHADER_VISIBILITY_VERTEX);
+
+		parameter2.InitAsConstants(8, 0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+		const D3D12_ROOT_PARAMETER parameters[] = { parameter, parameter2 };
 
 		D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags =
 			D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | // Only the input assembler stage needs access to the constant buffer.
 			D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
 			D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
-			D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-			D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS;
+			D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS;
 
 		CD3DX12_ROOT_SIGNATURE_DESC descRootSignature;
-		descRootSignature.Init(1, &parameter, 0, nullptr, rootSignatureFlags);
+		descRootSignature.Init(_countof(parameters), parameters, 0, nullptr, rootSignatureFlags);
 
 		ComPtr<ID3DBlob> pSignature;
 		ComPtr<ID3DBlob> pError;
@@ -292,6 +297,23 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		m_indexBufferView.SizeInBytes = sizeof(cubeIndices);
 		m_indexBufferView.Format = DXGI_FORMAT_R16_UINT;
 
+		D3D12_QUERY_HEAP_DESC desc = {};
+		desc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+		desc.Count = DX::c_frameCount * 2;
+		DX::ThrowIfFailed(d3dDevice->CreateQueryHeap(&desc, IID_PPV_ARGS(&m_queryHeap)));
+		m_queryHeap->SetName(L"GPUTimerHeap");
+
+		auto readBack = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+		auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(DX::c_frameCount * 2 * sizeof(UINT64));
+		DX::ThrowIfFailed(d3dDevice->CreateCommittedResource(
+			&readBack,
+			D3D12_HEAP_FLAG_NONE,
+			&bufferDesc,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(&m_queryReadbackBuffer)));
+		m_queryReadbackBuffer->SetName(L"GPUTimerBuffer");
+
 		// Wait for the command list to finish executing; the vertex/index buffers need to be uploaded to the GPU before the upload resources go out of scope.
 		m_deviceResources->WaitForGpu();
 	});
@@ -442,6 +464,23 @@ bool Sample3DSceneRenderer::Render()
 	// The command list can be reset anytime after ExecuteCommandList() is called.
 	DX::ThrowIfFailed(m_commandList->Reset(m_deviceResources->GetCommandAllocator(), m_pipelineState.Get()));
 
+	D3D12_RANGE readRange = {
+		m_deviceResources->GetCurrentFrameIndex() * 2 * sizeof(UINT64),
+		(m_deviceResources->GetCurrentFrameIndex() + 1) * 2 * sizeof(UINT64)
+	};
+	UINT64 timing[2];
+	UINT64* timingData;
+	m_queryReadbackBuffer->Map(0, &readRange, reinterpret_cast<void**>(&timingData));
+	timing[0] = timingData[0];
+	timing[1] = timingData[1];
+	m_queryReadbackBuffer->Unmap(0, nullptr);
+	std::ostringstream ss;
+	UINT64 gpuFreq;
+	m_deviceResources->GetCommandQueue()->GetTimestampFrequency(&gpuFreq);
+	auto m_gpuFreqInv = 1000.0 / double(gpuFreq);
+	ss << (timing[1] - timing[0]) * m_gpuFreqInv << " ms" << std::endl;
+	OutputDebugStringA(ss.str().c_str());
+
 	PIXBeginEvent(m_commandList.Get(), 0, L"Draw the cube");
 	{
 		// Set the graphics root signature and descriptor heaps to be used by this frame.
@@ -452,6 +491,8 @@ bool Sample3DSceneRenderer::Render()
 		// Bind the current frame's constant buffer to the pipeline.
 		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), m_deviceResources->GetCurrentFrameIndex(), m_cbvDescriptorSize);
 		m_commandList->SetGraphicsRootDescriptorTable(0, gpuHandle);
+		uint32_t data[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
+		m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
 
 		// Set the viewport and scissor rectangle.
 		D3D12_VIEWPORT viewport = m_deviceResources->GetScreenViewport();
@@ -474,7 +515,10 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
-		m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 2);
+		m_commandList->DrawIndexedInstanced(36, 100000, 0, 0, 0);
+		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 2 + 1);
+		m_commandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 2, 2, m_queryReadbackBuffer.Get(), m_deviceResources->GetCurrentFrameIndex() * 2 * sizeof(UINT64));
 
 		// Indicate that the render target will now be used to present when the command list is done executing.
 		CD3DX12_RESOURCE_BARRIER presentResourceBarrier =

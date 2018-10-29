@@ -42,6 +42,8 @@ namespace RootConstantPerformance
 		Microsoft::WRL::ComPtr<ID3D12Resource>				m_vertexBuffer;
 		Microsoft::WRL::ComPtr<ID3D12Resource>				m_indexBuffer;
 		Microsoft::WRL::ComPtr<ID3D12Resource>				m_constantBuffer;
+		Microsoft::WRL::ComPtr<ID3D12QueryHeap>				m_queryHeap;
+		Microsoft::WRL::ComPtr<ID3D12Resource>				m_queryReadbackBuffer;
 		ModelViewProjectionConstantBuffer					m_constantBufferData;
 		UINT8*												m_mappedConstantBuffer;
 		UINT												m_cbvDescriptorSize;
