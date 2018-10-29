@@ -47,15 +47,20 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 	// Create a root signature with a single constant buffer slot.
 	{
 		CD3DX12_DESCRIPTOR_RANGE range;
+		CD3DX12_DESCRIPTOR_RANGE range2;
 		CD3DX12_ROOT_PARAMETER parameter;
 		CD3DX12_ROOT_PARAMETER parameter2;
+		CD3DX12_ROOT_PARAMETER parameter3;
 
-		range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
+		range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 		parameter.InitAsDescriptorTable(1, &range, D3D12_SHADER_VISIBILITY_VERTEX);
 
 		parameter2.InitAsConstants(8, 0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 
-		const D3D12_ROOT_PARAMETER parameters[] = { parameter, parameter2 };
+		range2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 1, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
+		parameter3.InitAsDescriptorTable(1, &range2, D3D12_SHADER_VISIBILITY_PIXEL);
+
+		const D3D12_ROOT_PARAMETER parameters[] = { parameter, parameter2, parameter3 };
 
 		D3D12_ROOT_SIGNATURE_FLAGS rootSignatureFlags =
 			D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | // Only the input assembler stage needs access to the constant buffer.
@@ -238,10 +243,71 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 			m_commandList->ResourceBarrier(1, &indexBufferResourceBarrier);
 		}
 
+
+
+
+
+
+
+
+
+
+		Microsoft::WRL::ComPtr<ID3D12Resource> fakeConstantBufferUpload;
+
+		CD3DX12_RESOURCE_DESC fakeConstantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(256);
+		DX::ThrowIfFailed(d3dDevice->CreateCommittedResource(
+			&defaultHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&fakeConstantBufferDesc,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(&m_fakeConstantBuffer)));
+
+		DX::ThrowIfFailed(d3dDevice->CreateCommittedResource(
+			&uploadHeapProperties,
+			D3D12_HEAP_FLAG_NONE,
+			&fakeConstantBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&fakeConstantBufferUpload)));
+
+		NAME_D3D12_OBJECT(m_fakeConstantBuffer);
+
+		// Upload the vertex buffer to the GPU.
+		{
+
+			UINT32 data[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
+			D3D12_SUBRESOURCE_DATA cData = {};
+			cData.pData = reinterpret_cast<BYTE*>(data);
+			cData.RowPitch = 8 * sizeof(UINT32);
+			cData.SlicePitch = cData.RowPitch;
+
+			UpdateSubresources(m_commandList.Get(), m_fakeConstantBuffer.Get(), fakeConstantBufferUpload.Get(), 0, 0, 1, &cData);
+
+			CD3DX12_RESOURCE_BARRIER barrier =
+				CD3DX12_RESOURCE_BARRIER::Transition(m_fakeConstantBuffer.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+			m_commandList->ResourceBarrier(1, &barrier);
+		}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 		// Create a descriptor heap for the constant buffers.
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-			heapDesc.NumDescriptors = DX::c_frameCount;
+			heapDesc.NumDescriptors = DX::c_frameCount + 1;
 			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			// This flag indicates that this descriptor heap can be bound to the pipeline and that descriptors contained in it can be referenced by a root table.
 			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -277,11 +343,34 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 			cbvCpuHandle.Offset(m_cbvDescriptorSize);
 		}
 
+		{
+			D3D12_GPU_VIRTUAL_ADDRESS fakeConstantBufferGpuAddress = m_fakeConstantBuffer->GetGPUVirtualAddress();
+			D3D12_CONSTANT_BUFFER_VIEW_DESC desc;
+			desc.BufferLocation = fakeConstantBufferGpuAddress;
+			desc.SizeInBytes = 256;
+			d3dDevice->CreateConstantBufferView(&desc, cbvCpuHandle);
+			cbvCpuHandle.Offset(m_cbvDescriptorSize);
+		}
+
 		// Map the constant buffers.
 		CD3DX12_RANGE readRange(0, 0);		// We do not intend to read from this resource on the CPU.
 		DX::ThrowIfFailed(m_constantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_mappedConstantBuffer)));
 		ZeroMemory(m_mappedConstantBuffer, DX::c_frameCount * c_alignedConstantBufferSize);
 		// We don't unmap this until the app closes. Keeping things mapped for the lifetime of the resource is okay.
+
+
+
+
+
+
+
+
+		
+
+
+
+
+
 
 		// Close the command list and execute it to begin the vertex/index buffer copy into the GPU's default heap.
 		DX::ThrowIfFailed(m_commandList->Close());
@@ -313,6 +402,8 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 			nullptr,
 			IID_PPV_ARGS(&m_queryReadbackBuffer)));
 		m_queryReadbackBuffer->SetName(L"GPUTimerBuffer");
+
+		
 
 		// Wait for the command list to finish executing; the vertex/index buffers need to be uploaded to the GPU before the upload resources go out of scope.
 		m_deviceResources->WaitForGpu();
@@ -491,8 +582,10 @@ bool Sample3DSceneRenderer::Render()
 		// Bind the current frame's constant buffer to the pipeline.
 		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), m_deviceResources->GetCurrentFrameIndex(), m_cbvDescriptorSize);
 		m_commandList->SetGraphicsRootDescriptorTable(0, gpuHandle);
-		uint32_t data[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
+		UINT32 data[8] = { 32, 32, 32, 32, 32, 32, 32, 32 };
 		m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
+		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuFakeHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), DX::c_frameCount, m_cbvDescriptorSize);
+		m_commandList->SetGraphicsRootDescriptorTable(2, gpuFakeHandle);
 
 		// Set the viewport and scissor rectangle.
 		D3D12_VIEWPORT viewport = m_deviceResources->GetScreenViewport();
@@ -516,7 +609,7 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 2);
-		m_commandList->DrawIndexedInstanced(36, 100000, 0, 0, 0);
+		m_commandList->DrawIndexedInstanced(36, 1000, 0, 0, 0);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 2 + 1);
 		m_commandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 2, 2, m_queryReadbackBuffer.Get(), m_deviceResources->GetCurrentFrameIndex() * 2 * sizeof(UINT64));
 
