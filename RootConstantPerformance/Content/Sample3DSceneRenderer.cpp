@@ -530,7 +530,7 @@ void Sample3DSceneRenderer::Rotate(float radians)
 {
 	// Prepare to pass the updated model matrix to the shader.
 	XMStoreFloat4x4(&m_constantBufferData.model, XMMatrixTranspose(XMMatrixRotationY(radians)));
-	float value = 0.5f / 8.0f / 10000;
+	float value = 0.5f / 8.0f / 1000;
 	m_greyValue = value + value * std::sin(radians * 2);
 }
 

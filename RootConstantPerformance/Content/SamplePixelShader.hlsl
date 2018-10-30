@@ -14,7 +14,7 @@ cbuffer Constants : register(b0, space0)
 float4 main() : SV_TARGET
 {
 	float result = 0;
-	for (int i = 0; i < 10000; ++i) {
+	for (int i = 0; i < 1000; ++i) {
 		result += i0;
 		result += i1;
 		result += i2;
