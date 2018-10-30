@@ -299,7 +299,7 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		// Create a descriptor heap for the constant buffers.
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-			heapDesc.NumDescriptors = DX::c_frameCount + 1;
+			heapDesc.NumDescriptors = DX::c_frameCount * 2;
 			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			// This flag indicates that this descriptor heap can be bound to the pipeline and that descriptors contained in it can be referenced by a root table.
 			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
