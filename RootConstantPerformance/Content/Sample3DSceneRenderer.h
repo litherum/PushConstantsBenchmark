@@ -36,8 +36,10 @@ namespace RootConstantPerformance
 
 		// Direct3D resources for cube geometry.
 		Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList>	m_commandList;
-		Microsoft::WRL::ComPtr<ID3D12RootSignature>			m_rootSignature;
-		Microsoft::WRL::ComPtr<ID3D12PipelineState>			m_pipelineState;
+		Microsoft::WRL::ComPtr<ID3D12RootSignature>			m_rootSignatureRootConstants;
+		Microsoft::WRL::ComPtr<ID3D12RootSignature>			m_rootSignatureBufferConstants;
+		Microsoft::WRL::ComPtr<ID3D12PipelineState>			m_pipelineStateRootConstants;
+		Microsoft::WRL::ComPtr<ID3D12PipelineState>			m_pipelineStateBufferConstants;
 		Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>		m_cbvHeap;
 		Microsoft::WRL::ComPtr<ID3D12Resource>				m_vertexBuffer;
 		Microsoft::WRL::ComPtr<ID3D12Resource>				m_indexBuffer;
@@ -47,6 +49,7 @@ namespace RootConstantPerformance
 		Microsoft::WRL::ComPtr<ID3D12Resource>				m_fakeConstantBuffer;
 		ModelViewProjectionConstantBuffer					m_constantBufferData;
 		UINT8*												m_mappedConstantBuffer;
+		UINT8*												m_mappedFakeConstantBuffer;
 		UINT												m_cbvDescriptorSize;
 		D3D12_RECT											m_scissorRect;
 		std::vector<byte>									m_vertexShader;
@@ -59,6 +62,8 @@ namespace RootConstantPerformance
 		float	m_radiansPerSecond;
 		float	m_angle;
 		bool	m_tracking;
+		UINT	m_renderCount{ 0 };
+		float	m_greyValue{ 0 };
 	};
 }
 

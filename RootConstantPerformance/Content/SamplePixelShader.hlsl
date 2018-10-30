@@ -1,10 +1,3 @@
-// Per-pixel color data passed through the pixel shader.
-struct PixelShaderInput
-{
-	float4 pos : SV_POSITION;
-	float3 color : COLOR0;
-};
-
 cbuffer Constants : register(b0, space0)
 {
 	float i0;
@@ -18,10 +11,10 @@ cbuffer Constants : register(b0, space0)
 };
 
 // A pass-through function for the (interpolated) color data.
-float4 main(PixelShaderInput input, uint primitiveID : SV_PrimitiveID) : SV_TARGET
+float4 main() : SV_TARGET
 {
 	float result = 0;
-	for (int i = 0; i < 100000; ++i) {
+	for (int i = 0; i < 10000; ++i) {
 		result += i0;
 		result += i1;
 		result += i2;
