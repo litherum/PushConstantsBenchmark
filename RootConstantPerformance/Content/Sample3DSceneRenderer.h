@@ -64,6 +64,7 @@ namespace RootConstantPerformance
 		bool	m_tracking;
 		UINT	m_renderCount{ 0 };
 		float	m_greyValue{ 0 };
+		UINT	m_drawCount{ 1000 };
 	};
 }
 

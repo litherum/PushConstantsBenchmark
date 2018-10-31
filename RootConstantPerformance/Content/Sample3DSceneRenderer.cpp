@@ -299,7 +299,7 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		// Create a descriptor heap for the constant buffers.
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-			heapDesc.NumDescriptors = DX::c_frameCount * 2;
+			heapDesc.NumDescriptors = DX::c_frameCount + m_drawCount * DX::c_frameCount;
 			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			// This flag indicates that this descriptor heap can be bound to the pipeline and that descriptors contained in it can be referenced by a root table.
 			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -319,10 +319,11 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 
         NAME_D3D12_OBJECT(m_constantBuffer);
 
+		CD3DX12_RESOURCE_DESC fakeConstantBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(m_drawCount * DX::c_frameCount * c_alignedConstantBufferSize);
 		DX::ThrowIfFailed(d3dDevice->CreateCommittedResource(
 			&uploadHeapProperties,
 			D3D12_HEAP_FLAG_NONE,
-			&constantBufferDesc,
+			&fakeConstantBufferDesc,
 			D3D12_RESOURCE_STATE_GENERIC_READ,
 			nullptr,
 			IID_PPV_ARGS(&m_fakeConstantBuffer)));
@@ -348,13 +349,15 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		cbvGpuAddress = m_fakeConstantBuffer->GetGPUVirtualAddress();
 		for (int n = 0; n < DX::c_frameCount; n++)
 		{
-			D3D12_CONSTANT_BUFFER_VIEW_DESC desc;
-			desc.BufferLocation = cbvGpuAddress;
-			desc.SizeInBytes = c_alignedConstantBufferSize;
-			d3dDevice->CreateConstantBufferView(&desc, cbvCpuHandle);
+			for (UINT p = 0; p < m_drawCount; ++p) {
+				D3D12_CONSTANT_BUFFER_VIEW_DESC desc;
+				desc.BufferLocation = cbvGpuAddress;
+				desc.SizeInBytes = c_alignedConstantBufferSize;
+				d3dDevice->CreateConstantBufferView(&desc, cbvCpuHandle);
 
-			cbvGpuAddress += desc.SizeInBytes;
-			cbvCpuHandle.Offset(m_cbvDescriptorSize);
+				cbvGpuAddress += desc.SizeInBytes;
+				cbvCpuHandle.Offset(m_cbvDescriptorSize);
+			}
 		}
 
 		// Map the constant buffers.
@@ -365,7 +368,7 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 
 
 		DX::ThrowIfFailed(m_fakeConstantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_mappedFakeConstantBuffer)));
-		ZeroMemory(m_mappedFakeConstantBuffer, DX::c_frameCount * c_alignedConstantBufferSize);
+		ZeroMemory(m_mappedFakeConstantBuffer, m_drawCount * DX::c_frameCount * c_alignedConstantBufferSize);
 		// We don't unmap this until the app closes. Keeping things mapped for the lifetime of the resource is okay.
 
 
@@ -485,9 +488,6 @@ void Sample3DSceneRenderer::Update(DX::StepTimer const& timer)
 		// Update the constant buffer resource.
 		UINT8* destination = m_mappedConstantBuffer + (m_deviceResources->GetCurrentFrameIndex() * c_alignedConstantBufferSize);
 		memcpy(destination, &m_constantBufferData, sizeof(m_constantBufferData));
-		destination = m_mappedFakeConstantBuffer + (m_deviceResources->GetCurrentFrameIndex() * c_alignedConstantBufferSize);
-		float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
-		memcpy(destination, &data, sizeof(data));
 	}
 }
 
@@ -585,10 +585,15 @@ bool Sample3DSceneRenderer::Render()
 		UINT64 gpuFreq;
 		m_deviceResources->GetCommandQueue()->GetTimestampFrequency(&gpuFreq);
 		auto m_gpuFreqInv = 1000.0 / double(gpuFreq);
-		ss << "Root Constants: " << (timing[1] - timing[0]) * m_gpuFreqInv << " ms" << std::endl;
-		ss << "Buffer Constants: " << (timing[3] - timing[2]) * m_gpuFreqInv << " ms" << std::endl;
+		ss << "GPU Root Constants: " << (timing[1] - timing[0]) * m_gpuFreqInv << " ms" << std::endl;
+		ss << "GPU Buffer Constants: " << (timing[3] - timing[2]) * m_gpuFreqInv << " ms" << std::endl;
 		OutputDebugStringA(ss.str().c_str());
 	}
+
+	LARGE_INTEGER cpuRootConstantStart;
+	LARGE_INTEGER cpuRootConstantEnd;
+	LARGE_INTEGER cpuBufferConstantStart;
+	LARGE_INTEGER cpuBufferConstantEnd;
 
 	PIXBeginEvent(m_commandList.Get(), 0, L"Draw the cube");
 	{
@@ -601,9 +606,6 @@ bool Sample3DSceneRenderer::Render()
 		// Bind the current frame's constant buffer to the pipeline.
 		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), m_deviceResources->GetCurrentFrameIndex(), m_cbvDescriptorSize);
 		m_commandList->SetGraphicsRootDescriptorTable(0, gpuHandle);
-		float value = 0.00000625f;
-		float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
-		m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
 
 		// Set the viewport and scissor rectangle.
 		D3D12_VIEWPORT viewport = m_deviceResources->GetScreenViewport();
@@ -627,7 +629,13 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4);
-		m_commandList->DrawIndexedInstanced(36, 10000, 0, 0, 0);
+		QueryPerformanceCounter(&cpuRootConstantStart);
+		for (UINT i = 0; i < m_drawCount; ++i) {
+			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
+			m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
+			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+		}
+		QueryPerformanceCounter(&cpuRootConstantEnd);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 1);
 
 		// Indicate that the render target will now be used to present when the command list is done executing.
@@ -650,8 +658,6 @@ bool Sample3DSceneRenderer::Render()
 		// Bind the current frame's constant buffer to the pipeline.
 		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), m_deviceResources->GetCurrentFrameIndex(), m_cbvDescriptorSize);
 		m_commandList->SetGraphicsRootDescriptorTable(0, gpuHandle);
-		CD3DX12_GPU_DESCRIPTOR_HANDLE gpuFakeHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), DX::c_frameCount + m_deviceResources->GetCurrentFrameIndex(), m_cbvDescriptorSize);
-		m_commandList->SetGraphicsRootDescriptorTable(1, gpuFakeHandle);
 
 		// Set the viewport and scissor rectangle.
 		D3D12_VIEWPORT viewport = m_deviceResources->GetScreenViewport();
@@ -675,7 +681,16 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 2);
-		m_commandList->DrawIndexedInstanced(36, 10000, 0, 0, 0);
+		QueryPerformanceCounter(&cpuBufferConstantStart);
+		for (UINT i = 0; i < m_drawCount; ++i) {
+			UINT8* destination = m_mappedFakeConstantBuffer + ((m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize);
+			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
+			memcpy(destination, &data, sizeof(data));
+			CD3DX12_GPU_DESCRIPTOR_HANDLE gpuFakeHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), DX::c_frameCount + m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i, m_cbvDescriptorSize);
+			m_commandList->SetGraphicsRootDescriptorTable(1, gpuFakeHandle);
+			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+		}
+		QueryPerformanceCounter(&cpuBufferConstantEnd);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 3);
 		m_commandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4, 4, m_queryReadbackBuffer.Get(), m_deviceResources->GetCurrentFrameIndex() * 4 * sizeof(UINT64));
 
@@ -685,6 +700,20 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->ResourceBarrier(1, &presentResourceBarrier);
 	}
 	PIXEndEvent(m_commandList.Get());
+
+	{
+		std::ostringstream ss;
+		LARGE_INTEGER cpuFreq;
+		QueryPerformanceFrequency(&cpuFreq);
+		auto m_cpuFreqInv = 1000.0 / double(cpuFreq.QuadPart);
+		uint64_t start = cpuRootConstantStart.QuadPart;
+		uint64_t end = cpuRootConstantEnd.QuadPart;
+		ss << "CPU Root Constants: " << (end - start) * m_cpuFreqInv << " ms" << std::endl;
+		start = cpuBufferConstantStart.QuadPart;
+		end = cpuBufferConstantEnd.QuadPart;
+		ss << "CPU Buffer Constants: " << (end - start) * m_cpuFreqInv << " ms" << std::endl;
+		OutputDebugStringA(ss.str().c_str());
+	}
 
 	DX::ThrowIfFailed(m_commandList->Close());
 
