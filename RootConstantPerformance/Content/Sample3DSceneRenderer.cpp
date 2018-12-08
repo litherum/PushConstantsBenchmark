@@ -574,10 +574,14 @@ bool Sample3DSceneRenderer::Render()
 		OutputDebugStringA(ss.str().c_str());
 	}
 
-	LARGE_INTEGER cpuRootConstantStart;
-	LARGE_INTEGER cpuRootConstantEnd;
-	LARGE_INTEGER cpuBufferConstantStart;
-	LARGE_INTEGER cpuBufferConstantEnd;
+	LARGE_INTEGER cpuRootConstantSet = { 0 };
+	LARGE_INTEGER cpuRootConstantDraw = { 0 };
+	LARGE_INTEGER cpuBufferConstantUpload = { 0 };
+	LARGE_INTEGER cpuBufferConstantSet = { 0 };
+	LARGE_INTEGER cpuBufferConstantDraw = { 0 };
+
+	LARGE_INTEGER start;
+	LARGE_INTEGER end;
 
 	PIXBeginEvent(m_commandList.Get(), 0, L"Draw the cube");
 	{
@@ -613,13 +617,17 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4);
-		QueryPerformanceCounter(&cpuRootConstantStart);
 		for (UINT i = 0; i < m_drawCount; ++i) {
 			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
+			QueryPerformanceCounter(&start);
 			m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
+			QueryPerformanceCounter(&end);
+			cpuRootConstantSet.QuadPart += end.QuadPart - start.QuadPart;
+			QueryPerformanceCounter(&start);
 			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+			QueryPerformanceCounter(&end);
+			cpuRootConstantDraw.QuadPart += end.QuadPart - start.QuadPart;
 		}
-		QueryPerformanceCounter(&cpuRootConstantEnd);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 1);
 
 		// Indicate that the render target will now be used to present when the command list is done executing.
@@ -665,15 +673,23 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 2);
-		QueryPerformanceCounter(&cpuBufferConstantStart);
+		auto fakeConstantBufferGPUVirtualAddress = m_fakeConstantBuffer->GetGPUVirtualAddress();
 		for (UINT i = 0; i < m_drawCount; ++i) {
 			UINT8* destination = m_mappedFakeConstantBuffer + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize;
 			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
+			QueryPerformanceCounter(&start);
 			memcpy(destination, &data, sizeof(data));
-			m_commandList->SetGraphicsRootConstantBufferView(1, m_fakeConstantBuffer->GetGPUVirtualAddress() + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize);
+			QueryPerformanceCounter(&end);
+			cpuBufferConstantUpload.QuadPart += end.QuadPart - start.QuadPart;
+			QueryPerformanceCounter(&start);
+			m_commandList->SetGraphicsRootConstantBufferView(1, fakeConstantBufferGPUVirtualAddress + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize);
+			QueryPerformanceCounter(&end);
+			cpuBufferConstantSet.QuadPart += end.QuadPart - start.QuadPart;
+			QueryPerformanceCounter(&start);
 			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+			QueryPerformanceCounter(&end);
+			cpuBufferConstantDraw.QuadPart += end.QuadPart - start.QuadPart;
 		}
-		QueryPerformanceCounter(&cpuBufferConstantEnd);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 3);
 		m_commandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4, 4, m_queryReadbackBuffer.Get(), m_deviceResources->GetCurrentFrameIndex() * 4 * sizeof(UINT64));
 
@@ -689,12 +705,8 @@ bool Sample3DSceneRenderer::Render()
 		LARGE_INTEGER cpuFreq;
 		QueryPerformanceFrequency(&cpuFreq);
 		auto m_cpuFreqInv = 1000.0 / double(cpuFreq.QuadPart);
-		uint64_t start = cpuRootConstantStart.QuadPart;
-		uint64_t end = cpuRootConstantEnd.QuadPart;
-		ss << "CPU Root Constants: " << (end - start) * m_cpuFreqInv << " ms" << std::endl;
-		start = cpuBufferConstantStart.QuadPart;
-		end = cpuBufferConstantEnd.QuadPart;
-		ss << "CPU Buffer Constants: " << (end - start) * m_cpuFreqInv << " ms" << std::endl;
+		ss << "CPU Root Constants: Set: " << cpuRootConstantSet.QuadPart * m_cpuFreqInv << " ms Draw: " << cpuRootConstantDraw.QuadPart * m_cpuFreqInv << " ms" << std::endl;
+		ss << "CPU Buffer Constants: Upload: " << cpuBufferConstantUpload.QuadPart * m_cpuFreqInv << " ms Set: " << cpuBufferConstantSet.QuadPart * m_cpuFreqInv << " ms Draw: " << cpuBufferConstantDraw.QuadPart * m_cpuFreqInv << " ms" << std::endl;
 		OutputDebugStringA(ss.str().c_str());
 	}
 
