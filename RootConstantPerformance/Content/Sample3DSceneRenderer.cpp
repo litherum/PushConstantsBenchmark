@@ -78,15 +78,13 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 
 	{
 		CD3DX12_DESCRIPTOR_RANGE range;
-		CD3DX12_DESCRIPTOR_RANGE range2;
 		CD3DX12_ROOT_PARAMETER parameter;
 		CD3DX12_ROOT_PARAMETER parameter2;
 
 		range.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
 		parameter.InitAsDescriptorTable(1, &range, D3D12_SHADER_VISIBILITY_VERTEX);
 
-		range2.Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0, 0, D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND);
-		parameter2.InitAsDescriptorTable(1, &range2, D3D12_SHADER_VISIBILITY_PIXEL);
+		parameter2.InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
 
 		const D3D12_ROOT_PARAMETER parameters[] = { parameter, parameter2 };
 
@@ -299,7 +297,7 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		// Create a descriptor heap for the constant buffers.
 		{
 			D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-			heapDesc.NumDescriptors = DX::c_frameCount + m_drawCount * DX::c_frameCount;
+			heapDesc.NumDescriptors = DX::c_frameCount;
 			heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			// This flag indicates that this descriptor heap can be bound to the pipeline and that descriptors contained in it can be referenced by a root table.
 			heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -344,20 +342,6 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 
 			cbvGpuAddress += desc.SizeInBytes;
 			cbvCpuHandle.Offset(m_cbvDescriptorSize);
-		}
-
-		cbvGpuAddress = m_fakeConstantBuffer->GetGPUVirtualAddress();
-		for (int n = 0; n < DX::c_frameCount; n++)
-		{
-			for (UINT p = 0; p < m_drawCount; ++p) {
-				D3D12_CONSTANT_BUFFER_VIEW_DESC desc;
-				desc.BufferLocation = cbvGpuAddress;
-				desc.SizeInBytes = c_alignedConstantBufferSize;
-				d3dDevice->CreateConstantBufferView(&desc, cbvCpuHandle);
-
-				cbvGpuAddress += desc.SizeInBytes;
-				cbvCpuHandle.Offset(m_cbvDescriptorSize);
-			}
 		}
 
 		// Map the constant buffers.
@@ -683,11 +667,10 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 2);
 		QueryPerformanceCounter(&cpuBufferConstantStart);
 		for (UINT i = 0; i < m_drawCount; ++i) {
-			UINT8* destination = m_mappedFakeConstantBuffer + ((m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize);
+			UINT8* destination = m_mappedFakeConstantBuffer + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize;
 			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
 			memcpy(destination, &data, sizeof(data));
-			CD3DX12_GPU_DESCRIPTOR_HANDLE gpuFakeHandle(m_cbvHeap->GetGPUDescriptorHandleForHeapStart(), DX::c_frameCount + m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i, m_cbvDescriptorSize);
-			m_commandList->SetGraphicsRootDescriptorTable(1, gpuFakeHandle);
+			m_commandList->SetGraphicsRootConstantBufferView(1, m_fakeConstantBuffer->GetGPUVirtualAddress() + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize);
 			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
 		}
 		QueryPerformanceCounter(&cpuBufferConstantEnd);
