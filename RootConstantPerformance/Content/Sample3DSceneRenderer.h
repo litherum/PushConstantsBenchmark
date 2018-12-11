@@ -30,6 +30,7 @@ namespace RootConstantPerformance
 	private:
 		// Constant buffers must be 256-byte aligned.
 		static const UINT c_alignedConstantBufferSize = (sizeof(ModelViewProjectionConstantBuffer) + 255) & ~255;
+		static const UINT c_totalFrames = 10 * 60;
 
 		// Cached pointer to device resources.
 		std::shared_ptr<DX::DeviceResources> m_deviceResources;
@@ -63,8 +64,11 @@ namespace RootConstantPerformance
 		float	m_angle;
 		bool	m_tracking;
 		UINT	m_renderCount{ 0 };
-		float	m_greyValue{ 0 };
+		float	m_color[4] = {};
 		UINT	m_drawCount{ 1000 };
+		UINT	m_instanceCount{ 1 };
+		LARGE_INTEGER cpuRootConstantTotal = { 0 };
+		LARGE_INTEGER cpuBufferConstantTotal = { 0 };
 	};
 }
 
