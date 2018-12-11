@@ -388,7 +388,7 @@ void Sample3DSceneRenderer::CreateDeviceDependentResources()
 		m_queryHeap->SetName(L"GPUTimerHeap");
 
 		auto readBack = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
-		auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(DX::c_frameCount * 4 * sizeof(UINT64));
+		auto bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(c_totalFrames * 4 * sizeof(UINT64));
 		DX::ThrowIfFailed(d3dDevice->CreateCommittedResource(
 			&readBack,
 			D3D12_HEAP_FLAG_NONE,
@@ -514,8 +514,10 @@ void Sample3DSceneRenderer::Rotate(float radians)
 {
 	// Prepare to pass the updated model matrix to the shader.
 	XMStoreFloat4x4(&m_constantBufferData.model, XMMatrixTranspose(XMMatrixRotationY(radians)));
-	float value = 0.5f / 8.0f / 1000;
-	m_greyValue = value + value * std::sin(radians * 2);
+	m_color[0] = 0.5f + 0.5f * std::sin(radians * 2.0f);
+	m_color[1] = 0.5f + 0.5f * std::cos(radians * 2.5f);
+	m_color[2] = 0.5f + 0.5f * std::sin(radians * 3.5f);
+	m_color[3] = 0.5f + 0.5f * std::cos(radians * 5.5f);
 }
 
 void Sample3DSceneRenderer::StartTracking()
@@ -552,36 +554,9 @@ bool Sample3DSceneRenderer::Render()
 	// The command list can be reset anytime after ExecuteCommandList() is called.
 	DX::ThrowIfFailed(m_commandList->Reset(m_deviceResources->GetCommandAllocator(), nullptr));
 
-	if (m_renderCount > DX::c_frameCount) {
-		D3D12_RANGE readRange = {
-			m_deviceResources->GetCurrentFrameIndex() * 2 * sizeof(UINT64),
-			(m_deviceResources->GetCurrentFrameIndex() + 1) * 4 * sizeof(UINT64)
-		};
-		UINT64 timing[4];
-		UINT64* timingData;
-		m_queryReadbackBuffer->Map(0, &readRange, reinterpret_cast<void**>(&timingData));
-		timing[0] = timingData[0];
-		timing[1] = timingData[1];
-		timing[2] = timingData[2];
-		timing[3] = timingData[3];
-		m_queryReadbackBuffer->Unmap(0, nullptr);
-		std::ostringstream ss;
-		UINT64 gpuFreq;
-		m_deviceResources->GetCommandQueue()->GetTimestampFrequency(&gpuFreq);
-		auto m_gpuFreqInv = 1000.0 / double(gpuFreq);
-		ss << "GPU Root Constants: " << (timing[1] - timing[0]) * m_gpuFreqInv << " ms" << std::endl;
-		ss << "GPU Buffer Constants: " << (timing[3] - timing[2]) * m_gpuFreqInv << " ms" << std::endl;
-		OutputDebugStringA(ss.str().c_str());
-	}
-
-	LARGE_INTEGER cpuRootConstantSet = { 0 };
-	LARGE_INTEGER cpuRootConstantDraw = { 0 };
-	LARGE_INTEGER cpuBufferConstantUpload = { 0 };
-	LARGE_INTEGER cpuBufferConstantSet = { 0 };
-	LARGE_INTEGER cpuBufferConstantDraw = { 0 };
-
 	LARGE_INTEGER start;
 	LARGE_INTEGER end;
+	float data[8] = { m_color[0], 0.01f, m_color[1], 0.02f, m_color[2], 0.03f, m_color[3], 0.0f };
 
 	PIXBeginEvent(m_commandList.Get(), 0, L"Draw the cube");
 	{
@@ -617,17 +592,13 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4);
+		QueryPerformanceCounter(&start);
 		for (UINT i = 0; i < m_drawCount; ++i) {
-			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
-			QueryPerformanceCounter(&start);
 			m_commandList->SetGraphicsRoot32BitConstants(1, 8, data, 0);
-			QueryPerformanceCounter(&end);
-			cpuRootConstantSet.QuadPart += end.QuadPart - start.QuadPart;
-			QueryPerformanceCounter(&start);
-			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
-			QueryPerformanceCounter(&end);
-			cpuRootConstantDraw.QuadPart += end.QuadPart - start.QuadPart;
+			m_commandList->DrawIndexedInstanced(36, m_instanceCount, 0, 0, 0);
 		}
+		QueryPerformanceCounter(&end);
+		cpuRootConstantTotal.QuadPart += end.QuadPart - start.QuadPart;
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 1);
 
 		// Indicate that the render target will now be used to present when the command list is done executing.
@@ -636,8 +607,6 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->ResourceBarrier(1, &presentResourceBarrier);
 	}
 	PIXEndEvent(m_commandList.Get());
-
-
 
 	PIXBeginEvent(m_commandList.Get(), 0, L"Draw the cube");
 	{
@@ -674,22 +643,15 @@ bool Sample3DSceneRenderer::Render()
 		m_commandList->IASetIndexBuffer(&m_indexBufferView);
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 2);
 		auto fakeConstantBufferGPUVirtualAddress = m_fakeConstantBuffer->GetGPUVirtualAddress();
+		QueryPerformanceCounter(&start);
 		for (UINT i = 0; i < m_drawCount; ++i) {
 			UINT8* destination = m_mappedFakeConstantBuffer + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize;
-			float data[8] = { m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue, m_greyValue };
-			QueryPerformanceCounter(&start);
 			memcpy(destination, &data, sizeof(data));
-			QueryPerformanceCounter(&end);
-			cpuBufferConstantUpload.QuadPart += end.QuadPart - start.QuadPart;
-			QueryPerformanceCounter(&start);
 			m_commandList->SetGraphicsRootConstantBufferView(1, fakeConstantBufferGPUVirtualAddress + (m_drawCount * m_deviceResources->GetCurrentFrameIndex() + i) * c_alignedConstantBufferSize);
-			QueryPerformanceCounter(&end);
-			cpuBufferConstantSet.QuadPart += end.QuadPart - start.QuadPart;
-			QueryPerformanceCounter(&start);
-			m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
-			QueryPerformanceCounter(&end);
-			cpuBufferConstantDraw.QuadPart += end.QuadPart - start.QuadPart;
+			m_commandList->DrawIndexedInstanced(36, m_instanceCount, 0, 0, 0);
 		}
+		QueryPerformanceCounter(&end);
+		cpuBufferConstantTotal.QuadPart += end.QuadPart - start.QuadPart;
 		m_commandList->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4 + 3);
 		m_commandList->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, m_deviceResources->GetCurrentFrameIndex() * 4, 4, m_queryReadbackBuffer.Get(), m_deviceResources->GetCurrentFrameIndex() * 4 * sizeof(UINT64));
 
@@ -700,16 +662,6 @@ bool Sample3DSceneRenderer::Render()
 	}
 	PIXEndEvent(m_commandList.Get());
 
-	{
-		std::ostringstream ss;
-		LARGE_INTEGER cpuFreq;
-		QueryPerformanceFrequency(&cpuFreq);
-		auto m_cpuFreqInv = 1000.0 / double(cpuFreq.QuadPart);
-		ss << "CPU Root Constants: Set: " << cpuRootConstantSet.QuadPart * m_cpuFreqInv << " ms Draw: " << cpuRootConstantDraw.QuadPart * m_cpuFreqInv << " ms" << std::endl;
-		ss << "CPU Buffer Constants: Upload: " << cpuBufferConstantUpload.QuadPart * m_cpuFreqInv << " ms Set: " << cpuBufferConstantSet.QuadPart * m_cpuFreqInv << " ms Draw: " << cpuBufferConstantDraw.QuadPart * m_cpuFreqInv << " ms" << std::endl;
-		OutputDebugStringA(ss.str().c_str());
-	}
-
 	DX::ThrowIfFailed(m_commandList->Close());
 
 	// Execute the command list.
@@ -717,7 +669,33 @@ bool Sample3DSceneRenderer::Render()
 	m_deviceResources->GetCommandQueue()->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 
 	++m_renderCount;
-	if (m_renderCount == 60 * 60) {
+	if (m_renderCount == c_totalFrames) {
+		std::ostringstream ss;
+		// report CPU timings
+		LARGE_INTEGER cpuFreq;
+		QueryPerformanceFrequency(&cpuFreq);
+		auto m_cpuFreqInv = 1000.0 / double(cpuFreq.QuadPart * c_totalFrames);
+		ss << "CPU Root Constants: " << cpuRootConstantTotal.QuadPart * m_cpuFreqInv << " ms" << std::endl;
+		ss << "CPU Buffer Constants: " << cpuBufferConstantTotal.QuadPart * m_cpuFreqInv << " ms" << std::endl;
+		// read back GPU timings
+		UINT readCount = m_renderCount - DX::c_frameCount;
+		D3D12_RANGE readRange = { 0, readCount * 4 * sizeof(UINT64) };
+		UINT64* timingData;
+		m_queryReadbackBuffer->Map(0, &readRange, reinterpret_cast<void**>(&timingData));
+		UINT64 rootTiming = 0, bufferTiming = 0;
+		for (UINT i = 0; i < readCount; ++i) {
+			rootTiming += timingData[i*4 + 1] - timingData[i * 4 + 0];
+			bufferTiming += timingData[i * 4 + 3] - timingData[i * 4 + 2];
+		}
+		m_queryReadbackBuffer->Unmap(0, nullptr);
+		// report GPU timings
+		UINT64 gpuFreq;
+		m_deviceResources->GetCommandQueue()->GetTimestampFrequency(&gpuFreq);
+		auto m_gpuFreqInv = 1000.0 / double(gpuFreq * readCount);
+		ss << "GPU Root Constants: " << rootTiming * m_gpuFreqInv << " ms" << std::endl;
+		ss << "GPU Buffer Constants: " << bufferTiming * m_gpuFreqInv << " ms" << std::endl;
+		// exit
+		OutputDebugStringA(ss.str().c_str());
 		Windows::ApplicationModel::Core::CoreApplication::Exit();
 	}
 	return true;

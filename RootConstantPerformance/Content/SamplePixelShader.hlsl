@@ -13,16 +13,5 @@ cbuffer Constants : register(b0, space0)
 // A pass-through function for the (interpolated) color data.
 float4 main() : SV_TARGET
 {
-	float result = 0;
-	for (int i = 0; i < 1000; ++i) {
-		result += i0;
-		result += i1;
-		result += i2;
-		result += i3;
-		result += i4;
-		result += i5;
-		result += i6;
-		result += i7;
-	}
-	return float4(result, result, result, 1.0f);
+	return float4(i0 + i1, i2 + i3, i4 + i5, i6 + i7 + 1.0f);
 }

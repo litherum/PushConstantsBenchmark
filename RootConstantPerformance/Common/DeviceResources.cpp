@@ -586,6 +586,8 @@ void DX::DeviceResources::GetHardwareAdapter(IDXGIAdapter1** ppAdapter)
 		// actual device yet.
 		if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, _uuidof(ID3D12Device), nullptr)))
 		{
+			OutputDebugStringW(desc.Description);
+			OutputDebugStringW(L"\n");
 			break;
 		}
 	}
